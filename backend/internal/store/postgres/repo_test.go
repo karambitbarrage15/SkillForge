@@ -230,3 +230,72 @@ func TestEventRepo_List(t *testing.T) {
 		t.Errorf("Expected 1 event, got %d", len(events))
 	}
 }
+
+func TestEventRepo_FinalizeEvent(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	repo := NewEventRepo(db)
+	ctx := context.Background()
+
+	e := &event.Event{
+		ID:        uuid.New(),
+		Type:      event.TypeOrderCreated,
+		Payload:   json.RawMessage(`{"val": 3}`),
+		Priority:  event.PriorityNormal,
+		Status:    event.StatusProcessing,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	_ = repo.Create(ctx, e)
+
+	resultHash := "a38c4b12759e669bc01a742880c9261a8f9024f0c4369e8b7f8df1cb52fc4cf2"
+
+	// Simulate concurrent finalization
+	numWorkers := 10
+	var wg sync.WaitGroup
+	successCount := 0
+	alreadyFinalizedCount := 0
+	var mu sync.Mutex
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := repo.FinalizeEvent(context.Background(), e.ID, resultHash)
+
+			mu.Lock()
+			defer mu.Unlock()
+			if err == nil {
+				successCount++
+			} else if err == store.ErrAlreadyFinalized {
+				alreadyFinalizedCount++
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	if successCount != 1 {
+		t.Errorf("Expected exactly 1 worker to succeed, but %d succeeded", successCount)
+	}
+
+	if alreadyFinalizedCount != numWorkers-1 {
+		t.Errorf("Expected %d workers to get ErrAlreadyFinalized, got %d", numWorkers-1, alreadyFinalizedCount)
+	}
+
+	// Verify idempotency record exists exactly once
+	var count int
+	err := db.pool.QueryRow(ctx, "SELECT COUNT(*) FROM idempotency WHERE event_id = $1", e.ID).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to count idempotency records: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected exactly 1 idempotency record, got %d", count)
+	}
+
+	// Verify event status is COMPLETED
+	updatedEvent, _ := repo.GetByID(ctx, e.ID)
+	if updatedEvent.Status != event.StatusCompleted {
+		t.Errorf("Expected event status COMPLETED, got %s", updatedEvent.Status)
+	}
+}

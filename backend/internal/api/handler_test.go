@@ -57,6 +57,10 @@ func (m *MockRepo) UpdateStatus(ctx context.Context, id uuid.UUID, old, new even
 	return nil
 }
 
+func (m *MockRepo) FinalizeEvent(ctx context.Context, id uuid.UUID, resultHash string) error {
+	return nil
+}
+
 // MockPublisher tracks calls and can simulate failures
 type MockPublisher struct {
 	FailPublish bool
@@ -166,7 +170,7 @@ func TestHandleCreateEvent(t *testing.T) {
 			repo := &MockRepo{FailCreate: tt.repoFail, CallOrder: &callOrder}
 			pub := &MockPublisher{FailPublish: tt.pubFail, CallOrder: &callOrder}
 
-			handler := NewEventHandler(repo, pub)
+			handler := NewEventHandler(repo, pub, nil, nil)
 
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/events", bytes.NewBufferString(tt.body))
 			rr := httptest.NewRecorder()
@@ -225,7 +229,7 @@ func TestHandleGetEventByID(t *testing.T) {
 				tt.setupRepo(repo)
 			}
 			pub := &MockPublisher{}
-			handler := NewEventHandler(repo, pub)
+			handler := NewEventHandler(repo, pub, nil, nil)
 
 			// We need to use http.NewServeMux to resolve PathValues in Go 1.22
 			mux := http.NewServeMux()
@@ -292,7 +296,7 @@ func TestHandleListEvents(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &MockRepo{FailList: tt.repoFail, ListResult: make([]*event.Event, 0)}
 			pub := &MockPublisher{}
-			handler := NewEventHandler(repo, pub)
+			handler := NewEventHandler(repo, pub, nil, nil)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/events"+tt.queryParams, nil)
 			rr := httptest.NewRecorder()

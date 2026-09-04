@@ -97,6 +97,60 @@ func (r *EventRepo) UpdateStatus(ctx context.Context, id uuid.UUID, old, new eve
 	return tx.Commit(ctx)
 }
 
+func (r *EventRepo) FinalizeEvent(ctx context.Context, id uuid.UUID, resultHash string) error {
+	if !event.IsValidTransition(event.StatusProcessing, event.StatusCompleted) {
+		return store.ErrInvalidStateTransition
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var currentStatus event.EventStatus
+	err = tx.QueryRow(ctx, "SELECT status FROM events WHERE id = $1 FOR UPDATE", id).Scan(&currentStatus)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return store.ErrEventNotFound
+		}
+		return err
+	}
+
+	if currentStatus != event.StatusProcessing {
+		if currentStatus == event.StatusCompleted {
+			return store.ErrAlreadyFinalized
+		}
+		return store.ErrInvalidStateTransition
+	}
+
+	now := time.Now()
+
+	// Insert into idempotency
+	qIdemp := `INSERT INTO idempotency (event_id, result_hash, created_at)
+			   VALUES ($1, $2, $3)
+			   ON CONFLICT (event_id) DO NOTHING`
+	res, err := tx.Exec(ctx, qIdemp, id, resultHash, now)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		// Event was in PROCESSING state, but idempotency record existed?
+		// This should theoretically not happen unless there's a manual DB meddling or complex race we want to catch.
+		// Either way, if we can't insert, it's already finalized.
+		return store.ErrAlreadyFinalized
+	}
+
+	// Update event status
+	qUpdate := `UPDATE events SET status = $1, updated_at = $2, completed_at = $3 WHERE id = $4`
+	_, err = tx.Exec(ctx, qUpdate, event.StatusCompleted, now, now, id)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
 func (r *EventRepo) List(ctx context.Context, limit, offset int) ([]*event.Event, error) {
 	q := `SELECT id, type, payload, priority, status, attempt, worker_id, created_at, updated_at, completed_at
 		  FROM events 

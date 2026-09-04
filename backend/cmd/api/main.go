@@ -21,6 +21,7 @@ import (
 
 	"streamforge/internal/queue/redis"
 	"streamforge/internal/store/postgres"
+	"streamforge/internal/websocket"
 
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -55,7 +56,10 @@ func main() {
 	eventRepo := postgres.NewEventRepo(db)
 	publisher := redis.NewRedisQueue(rdb)
 
-	eventHandler := api.NewEventHandler(eventRepo, publisher)
+	hub := websocket.NewHub(rdb)
+	go hub.Run(ctx)
+
+	eventHandler := api.NewEventHandler(eventRepo, publisher, hub, rdb)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
@@ -63,6 +67,7 @@ func main() {
 	mux.HandleFunc("POST /api/v1/events", eventHandler.HandleCreateEvent)
 	mux.HandleFunc("GET /api/v1/events/{id}", eventHandler.HandleGetEventByID)
 	mux.HandleFunc("GET /api/v1/events", eventHandler.HandleListEvents)
+	mux.HandleFunc("GET /ws", eventHandler.ServeWs)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.HTTPPort,

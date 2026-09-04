@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -8,23 +9,38 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	gorillaws "github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 
 	"streamforge/internal/event"
 	"streamforge/internal/queue"
 	"streamforge/internal/store"
+	"streamforge/internal/websocket"
 )
+
+var upgrader = gorillaws.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		return true // Allow all origins for now
+	},
+}
 
 // EventHandler handles HTTP requests for events.
 type EventHandler struct {
 	repo      store.EventRepository
 	publisher queue.Publisher
+	hub       *websocket.Hub
+	rdb       *redis.Client
 }
 
 // NewEventHandler creates a new stateless EventHandler.
-func NewEventHandler(repo store.EventRepository, pub queue.Publisher) *EventHandler {
+func NewEventHandler(repo store.EventRepository, pub queue.Publisher, hub *websocket.Hub, rdb *redis.Client) *EventHandler {
 	return &EventHandler{
 		repo:      repo,
 		publisher: pub,
+		hub:       hub,
+		rdb:       rdb,
 	}
 }
 
@@ -67,6 +83,20 @@ func (h *EventHandler) HandleCreateEvent(w http.ResponseWriter, r *http.Request)
 		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 		return
 	}
+
+	// Non-critical: Broadcast EVENT_RECEIVED
+	go func(id uuid.UUID) {
+		if h.rdb == nil {
+			return
+		}
+		msg := websocket.EventReceivedMsg{
+			Type:    websocket.TypeEventReceived,
+			EventID: id,
+		}
+		b, _ := json.Marshal(msg)
+		// Publish to Redis PubSub for all hubs
+		h.rdb.Publish(context.Background(), websocket.RedisPubSubChannel, string(b))
+	}(e.ID)
 
 	resp := CreateEventResponse{
 		ID:     e.ID,
@@ -145,4 +175,18 @@ func (h *EventHandler) HandleListEvents(w http.ResponseWriter, r *http.Request) 
 	if err := json.NewEncoder(w).Encode(events); err != nil {
 		slog.Error("Failed to encode response", "err", err)
 	}
+}
+
+// ServeWs handles websocket requests from the peer.
+func (h *EventHandler) ServeWs(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.Error("Failed to upgrade websocket", "err", err)
+		return
+	}
+	client := websocket.NewClient(h.hub, conn)
+	client.HubRegister() // Wrapper or just access channel directly
+
+	go client.WritePump()
+	go client.ReadPump()
 }

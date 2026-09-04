@@ -22,7 +22,7 @@ type Pool struct {
 
 // NewPool creates a new Worker Pool with exactly `count` workers.
 // It explicitly prevents unbounded worker creation by statically allocating the workers.
-func NewPool(count int, groupName string, consumer queue.Consumer, acker queue.Acker, retrier queue.Retrier, hb Heartbeater, proc Processor, recorder EventFailureRecorder, updater EventStatusUpdater, interval, ttl time.Duration, maxAttempts int, baseDelay time.Duration) *Pool {
+func NewPool(count int, groupName string, consumer queue.Consumer, acker queue.Acker, retrier queue.Retrier, hb Heartbeater, proc Processor, recorder EventFailureRecorder, updater EventStatusUpdater, broadcaster Broadcaster, interval, ttl time.Duration, maxAttempts int, baseDelay time.Duration) *Pool {
 	if count <= 0 {
 		count = 4 // Enforce a minimum safe limit
 	}
@@ -30,7 +30,7 @@ func NewPool(count int, groupName string, consumer queue.Consumer, acker queue.A
 	workers := make([]*Worker, count)
 	for i := 0; i < count; i++ {
 		workerID := fmt.Sprintf("worker-%d", i+1)
-		workers[i] = NewWorker(workerID, groupName, consumer, acker, retrier, hb, proc, recorder, updater, interval, ttl, maxAttempts, baseDelay)
+		workers[i] = NewWorker(workerID, groupName, consumer, acker, retrier, hb, proc, recorder, updater, broadcaster, interval, ttl, maxAttempts, baseDelay)
 	}
 
 	return &Pool{

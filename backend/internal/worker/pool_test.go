@@ -11,7 +11,7 @@ import (
 )
 
 func TestPool_CreatesExactlyWorkerCount(t *testing.T) {
-	pool := NewPool(5, "g1", &MockConsumer{}, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, time.Second, time.Second, 3, time.Millisecond)
+	pool := NewPool(5, "g1", &MockConsumer{}, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, nil, time.Second, time.Second, 3, time.Millisecond)
 
 	workers := pool.GetWorkers()
 	if len(workers) != 5 {
@@ -20,7 +20,7 @@ func TestPool_CreatesExactlyWorkerCount(t *testing.T) {
 }
 
 func TestPool_StartAndStop_AllWorkers(t *testing.T) {
-	pool := NewPool(3, "g1", &MockConsumer{}, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, 50*time.Millisecond, time.Second, 3, time.Millisecond)
+	pool := NewPool(3, "g1", &MockConsumer{}, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, nil, 50*time.Millisecond, time.Second, 3, time.Millisecond)
 
 	err := pool.Start(context.Background())
 	if err != nil {
@@ -49,7 +49,7 @@ func TestPool_StartAndStop_AllWorkers(t *testing.T) {
 }
 
 func TestPool_ConcurrentStartStopSafe(t *testing.T) {
-	pool := NewPool(4, "g1", &MockConsumer{}, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, time.Second, time.Second, 3, time.Millisecond)
+	pool := NewPool(4, "g1", &MockConsumer{}, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, nil, time.Second, time.Second, 3, time.Millisecond)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -88,7 +88,7 @@ func TestPool_GracefulShutdownWaitsForAllWorkers(t *testing.T) {
 	}
 
 	processor := &MockProcessor{delay: 200 * time.Millisecond}
-	pool := NewPool(2, "g1", consumer, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, processor, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, time.Second, time.Second, 3, time.Millisecond)
+	pool := NewPool(2, "g1", consumer, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, processor, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, nil, time.Second, time.Second, 3, time.Millisecond)
 
 	pool.Start(context.Background())
 	<-jobStarted                      // Wait for a job to be pulled

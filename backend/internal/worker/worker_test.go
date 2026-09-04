@@ -86,10 +86,15 @@ func (m *MockEventStatusUpdater) UpdateStatus(ctx context.Context, id uuid.UUID,
 	return nil
 }
 
+func (m *MockEventStatusUpdater) FinalizeEvent(ctx context.Context, id uuid.UUID, resultHash string) error {
+	atomic.AddInt32(&m.updated, 1)
+	return nil
+}
+
 // --- Tests ---
 
 func TestWorker_Lifecycle_And_Repeated_Start_Stop(t *testing.T) {
-	w := NewWorker("w1", "g1", &MockConsumer{}, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, 50*time.Millisecond, time.Second, 3, time.Millisecond)
+	w := NewWorker("w1", "g1", &MockConsumer{}, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, nil, 50*time.Millisecond, time.Second, 3, time.Millisecond)
 
 	if w.Status() != StatusStopped {
 		t.Fatalf("expected STOPPED, got %s", w.Status())
@@ -139,7 +144,7 @@ func TestWorker_SuccessfulProcessing_And_Ack(t *testing.T) {
 	acker := &MockAcker{}
 	processor := &MockProcessor{}
 
-	w := NewWorker("w1", "g1", consumer, acker, &MockRetrier{}, &MockHeartbeater{}, processor, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, time.Second, time.Second, 3, time.Millisecond)
+	w := NewWorker("w1", "g1", consumer, acker, &MockRetrier{}, &MockHeartbeater{}, processor, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, nil, time.Second, time.Second, 3, time.Millisecond)
 	w.Start(context.Background())
 
 	// Wait for processing
@@ -158,7 +163,7 @@ func TestWorker_SuccessfulProcessing_And_Ack(t *testing.T) {
 func TestWorker_Heartbeat_SuccessAndFailure(t *testing.T) {
 	hb := &MockHeartbeater{}
 
-	w := NewWorker("w1", "g1", &MockConsumer{}, &MockAcker{}, &MockRetrier{}, hb, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, 20*time.Millisecond, time.Second, 3, time.Millisecond)
+	w := NewWorker("w1", "g1", &MockConsumer{}, &MockAcker{}, &MockRetrier{}, hb, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, nil, 20*time.Millisecond, time.Second, 3, time.Millisecond)
 	w.Start(context.Background())
 
 	time.Sleep(70 * time.Millisecond)
@@ -171,7 +176,7 @@ func TestWorker_Heartbeat_SuccessAndFailure(t *testing.T) {
 
 	// Test heartbeat failure doesn't crash worker
 	hbFailing := &MockHeartbeater{err: errors.New("redis dead")}
-	w2 := NewWorker("w2", "g1", &MockConsumer{}, &MockAcker{}, &MockRetrier{}, hbFailing, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, 20*time.Millisecond, time.Second, 3, time.Millisecond)
+	w2 := NewWorker("w2", "g1", &MockConsumer{}, &MockAcker{}, &MockRetrier{}, hbFailing, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, nil, 20*time.Millisecond, time.Second, 3, time.Millisecond)
 	w2.Start(context.Background())
 
 	time.Sleep(50 * time.Millisecond)
@@ -192,7 +197,7 @@ func TestWorker_ConsumeFailure_Backoff(t *testing.T) {
 		},
 	}
 
-	w := NewWorker("w1", "g1", consumer, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, time.Second, time.Second, 3, time.Millisecond)
+	w := NewWorker("w1", "g1", consumer, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, nil, time.Second, time.Second, 3, time.Millisecond)
 	w.Start(context.Background())
 
 	// Wait 1.5 seconds. With a 1-second backoff, we should see 2 calls max.
@@ -206,7 +211,7 @@ func TestWorker_ConsumeFailure_Backoff(t *testing.T) {
 }
 
 func TestWorker_ConcurrentStatusAccess(t *testing.T) {
-	w := NewWorker("w1", "g1", &MockConsumer{}, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, time.Second, time.Second, 3, time.Millisecond)
+	w := NewWorker("w1", "g1", &MockConsumer{}, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, &MockProcessor{}, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, nil, time.Second, time.Second, 3, time.Millisecond)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -241,7 +246,7 @@ func TestWorker_Shutdown_WhileProcessing(t *testing.T) {
 	}
 
 	processor := &MockProcessor{delay: 200 * time.Millisecond}
-	w := NewWorker("w1", "g1", consumer, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, processor, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, time.Second, time.Second, 3, time.Millisecond)
+	w := NewWorker("w1", "g1", consumer, &MockAcker{}, &MockRetrier{}, &MockHeartbeater{}, processor, &MockEventFailureRecorder{status: event.StatusFailed}, &MockEventStatusUpdater{}, nil, time.Second, time.Second, 3, time.Millisecond)
 
 	w.Start(context.Background())
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"streamforge/internal/event"
 	"streamforge/internal/queue"
+	"streamforge/internal/store"
 )
 
 // Status represents the lifecycle state of a Worker.
@@ -36,6 +38,11 @@ type EventFailureRecorder interface {
 
 type EventStatusUpdater interface {
 	UpdateStatus(ctx context.Context, id uuid.UUID, old, new event.EventStatus) error
+	FinalizeEvent(ctx context.Context, id uuid.UUID, resultHash string) error
+}
+
+type Broadcaster interface {
+	Broadcast(ctx context.Context, payload []byte)
 }
 
 // Worker represents a single unit of execution.
@@ -57,6 +64,7 @@ type Worker struct {
 	processor   Processor
 	recorder    EventFailureRecorder
 	updater     EventStatusUpdater
+	broadcaster Broadcaster
 
 	interval    time.Duration
 	ttl         time.Duration
@@ -65,7 +73,7 @@ type Worker struct {
 }
 
 // NewWorker creates a new worker instance.
-func NewWorker(id, group string, consumer queue.Consumer, acker queue.Acker, retrier queue.Retrier, hb Heartbeater, proc Processor, recorder EventFailureRecorder, updater EventStatusUpdater, interval, ttl time.Duration, maxAttempts int, baseDelay time.Duration) *Worker {
+func NewWorker(id, group string, consumer queue.Consumer, acker queue.Acker, retrier queue.Retrier, hb Heartbeater, proc Processor, recorder EventFailureRecorder, updater EventStatusUpdater, broadcaster Broadcaster, interval, ttl time.Duration, maxAttempts int, baseDelay time.Duration) *Worker {
 	return &Worker{
 		id:          id,
 		group:       group,
@@ -77,6 +85,7 @@ func NewWorker(id, group string, consumer queue.Consumer, acker queue.Acker, ret
 		processor:   proc,
 		recorder:    recorder,
 		updater:     updater,
+		broadcaster: broadcaster,
 		interval:    interval,
 		ttl:         ttl,
 		maxAttempts: maxAttempts,
@@ -114,6 +123,10 @@ func (w *Worker) Start(ctx context.Context) error {
 
 	w.setStatus(StatusReady)
 
+	if w.broadcaster != nil {
+		w.broadcaster.Broadcast(context.Background(), []byte(`{"type":"WORKER_ONLINE","worker_id":"`+w.id+`"}`))
+	}
+
 	w.wg.Add(2)
 	go w.runHeartbeat(ctx)
 	go w.runJobLoop(ctx)
@@ -140,6 +153,10 @@ func (w *Worker) Stop() {
 	// Wait for goroutines to finish
 	w.wg.Wait()
 	w.setStatus(StatusStopped)
+
+	if w.broadcaster != nil {
+		w.broadcaster.Broadcast(context.Background(), []byte(`{"type":"WORKER_OFFLINE","worker_id":"`+w.id+`"}`))
+	}
 }
 
 func (w *Worker) runHeartbeat(ctx context.Context) {
@@ -203,15 +220,44 @@ func (w *Worker) runJobLoop(ctx context.Context) {
 		// If we want it to finish cleanly without being interrupted by the shutdown, we should pass context.Background() with an independent timeout (e.g., job timeout).
 		// Let's just use context.Background() for the job, to shield it from shutdown cancellation, as we wait for wg.Wait() anyway.
 		jobCtx := context.Background()
+		startT := time.Now()
+
+		if w.broadcaster != nil {
+			w.broadcaster.Broadcast(context.Background(), []byte(`{"type":"EVENT_PROCESSING","event_id":"`+job.Event.ID.String()+`","worker_id":"`+w.id+`"}`))
+		}
 
 		err = w.processor.Process(jobCtx, job.Event)
 		if err != nil {
 			log.Printf("[Worker %s] Process error for job %s: %v", w.id, job.Event.ID, err)
 			w.handleFailure(ctx, jobCtx, job)
 		} else {
-			// Acknowledge the job on success
-			if err := w.acker.Ack(jobCtx, job); err != nil {
-				log.Printf("[Worker %s] Ack error for job %s: %v", w.id, job.Event.ID, err)
+			// Phase 11: Idempotent atomic finalization
+			// Use a SHA-256 hash of "completed" as the deterministic success marker
+			resultHash := "a38c4b12759e669bc01a742880c9261a8f9024f0c4369e8b7f8df1cb52fc4cf2" // SHA-256("completed")
+			err := w.updater.FinalizeEvent(jobCtx, job.Event.ID, resultHash)
+			if err != nil {
+				if errors.Is(err, store.ErrAlreadyFinalized) {
+					log.Printf("[Worker %s] Job %s was already finalized. Acknowledging duplicate.", w.id, job.Event.ID)
+					if err := w.acker.Ack(jobCtx, job); err != nil {
+						log.Printf("[Worker %s] Ack error for duplicate job %s: %v", w.id, job.Event.ID, err)
+					}
+				} else {
+					log.Printf("[Worker %s] Failed to finalize event %s: %v", w.id, job.Event.ID, err)
+				}
+			} else {
+				// Acknowledge the job on success
+				if err := w.acker.Ack(jobCtx, job); err != nil {
+					log.Printf("[Worker %s] Ack error for job %s: %v", w.id, job.Event.ID, err)
+				}
+				if w.broadcaster != nil {
+					// Broadcast completed
+					dur := time.Since(startT).Milliseconds()
+					msg := `{"type":"EVENT_COMPLETED","event_id":"` + job.Event.ID.String() + `","processing_time_ms":` + func() string {
+						importStr := strconv.FormatInt(dur, 10)
+						return importStr
+					}() + `}`
+					w.broadcaster.Broadcast(context.Background(), []byte(msg))
+				}
 			}
 		}
 
@@ -236,6 +282,10 @@ func (w *Worker) handleFailure(ctx, jobCtx context.Context, job *queue.Job) {
 		// Permanently failed. Ack from Redis to drop it from PEL.
 		if err := w.acker.Ack(jobCtx, job); err != nil {
 			log.Printf("[Worker %s] Ack error for permanently failed job %s: %v", w.id, job.Event.ID, err)
+		}
+		if w.broadcaster != nil {
+			msg := `{"type":"EVENT_FAILED","event_id":"` + job.Event.ID.String() + `","attempt":` + strconv.Itoa(job.Event.Attempt) + `}`
+			w.broadcaster.Broadcast(context.Background(), []byte(msg))
 		}
 		return
 	}

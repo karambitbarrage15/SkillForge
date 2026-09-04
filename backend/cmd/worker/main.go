@@ -13,6 +13,7 @@ import (
 	"streamforge/internal/queue/redis"
 	"streamforge/internal/store/postgres"
 	"streamforge/internal/worker"
+	"time"
 
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -38,7 +39,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	db, err := postgres.NewDB(ctx, cfg.DatabaseURL)
+	db, err := postgres.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("failed to connect to postgres", "err", err)
 		os.Exit(1)
@@ -96,6 +97,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	broadcaster := worker.NewRedisBroadcaster(rdb)
+
 	pool := worker.NewPool(
 		cfg.WorkerCount,
 		cfg.WorkerConsumerGroup,
@@ -106,6 +109,7 @@ func main() {
 		registry,
 		repo,
 		repo,
+		broadcaster,
 		cfg.HeartbeatInterval,
 		cfg.HeartbeatTTL,
 		3,             // maxAttempts
