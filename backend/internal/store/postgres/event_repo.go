@@ -47,6 +47,11 @@ func (r *EventRepo) GetByID(ctx context.Context, id uuid.UUID) (*event.Event, er
 }
 
 func (r *EventRepo) UpdateStatus(ctx context.Context, id uuid.UUID, old, new event.EventStatus) error {
+	// First enforce the domain state machine rules before hitting DB
+	if !event.IsValidTransition(old, new) {
+		return store.ErrInvalidStateTransition
+	}
+
 	// First check if it exists at all to distinguish between NotFound and InvalidState
 	// Using a transaction to ensure atomic check-and-update behavior
 	tx, err := r.pool.Begin(ctx)
@@ -68,8 +73,19 @@ func (r *EventRepo) UpdateStatus(ctx context.Context, id uuid.UUID, old, new eve
 		return store.ErrInvalidStateTransition
 	}
 
-	q := `UPDATE events SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4`
-	res, err := tx.Exec(ctx, q, new, time.Now(), id, old)
+	var q string
+	var args []any
+	now := time.Now()
+
+	if new == event.StatusCompleted {
+		q = `UPDATE events SET status = $1, updated_at = $2, completed_at = $3 WHERE id = $4 AND status = $5`
+		args = []any{new, now, now, id, old}
+	} else {
+		q = `UPDATE events SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4`
+		args = []any{new, now, id, old}
+	}
+
+	res, err := tx.Exec(ctx, q, args...)
 	if err != nil {
 		return err
 	}

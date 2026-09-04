@@ -62,14 +62,37 @@ func TestEventRepo_UpdateStatus(t *testing.T) {
 		t.Errorf("Expected valid transition to succeed, got: %v", err)
 	}
 
-	// 3. Invalid transition (stale old status)
-	err = repo.UpdateStatus(ctx, e.ID, event.StatusReceived, event.StatusProcessing)
+	// 3. Invalid transition (rejected by state machine)
+	err = repo.UpdateStatus(ctx, e.ID, event.StatusQueued, event.StatusCompleted)
 	if err != store.ErrInvalidStateTransition {
-		t.Errorf("Expected ErrInvalidStateTransition, got: %v", err)
+		t.Errorf("Expected ErrInvalidStateTransition from state machine, got: %v", err)
 	}
 
-	// 4. Event not found
-	err = repo.UpdateStatus(ctx, uuid.New(), event.StatusQueued, event.StatusProcessing)
+	// 4. Stale old status (rejected by DB optimistic lock)
+	err = repo.UpdateStatus(ctx, e.ID, event.StatusReceived, event.StatusQueued)
+	if err != store.ErrInvalidStateTransition {
+		t.Errorf("Expected ErrInvalidStateTransition from DB check, got: %v", err)
+	}
+
+	// 5. Valid transition to PROCESSING
+	err = repo.UpdateStatus(ctx, e.ID, event.StatusQueued, event.StatusProcessing)
+	if err != nil {
+		t.Errorf("Expected transition to PROCESSING to succeed, got: %v", err)
+	}
+
+	// 6. Valid transition to COMPLETED (should set completed_at)
+	err = repo.UpdateStatus(ctx, e.ID, event.StatusProcessing, event.StatusCompleted)
+	if err != nil {
+		t.Errorf("Expected transition to COMPLETED to succeed, got: %v", err)
+	}
+
+	updatedEvent, _ := repo.GetByID(ctx, e.ID)
+	if updatedEvent.CompletedAt == nil {
+		t.Error("Expected CompletedAt to be set after transition to COMPLETED")
+	}
+
+	// 7. Event not found
+	err = repo.UpdateStatus(ctx, uuid.New(), event.StatusReceived, event.StatusQueued)
 	if err != store.ErrEventNotFound {
 		t.Errorf("Expected ErrEventNotFound, got: %v", err)
 	}
