@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"streamforge/internal/event"
 	"streamforge/internal/queue"
 )
@@ -28,6 +30,14 @@ type Processor interface {
 	Process(ctx context.Context, e *event.Event) error
 }
 
+type EventFailureRecorder interface {
+	RecordFailure(ctx context.Context, id uuid.UUID, maxAttempts int) (event.EventStatus, error)
+}
+
+type EventStatusUpdater interface {
+	UpdateStatus(ctx context.Context, id uuid.UUID, old, new event.EventStatus) error
+}
+
 // Worker represents a single unit of execution.
 type Worker struct {
 	id    string
@@ -42,25 +52,35 @@ type Worker struct {
 
 	consumer    queue.Consumer
 	acker       queue.Acker
+	retrier     queue.Retrier
 	heartbeater Heartbeater
 	processor   Processor
+	recorder    EventFailureRecorder
+	updater     EventStatusUpdater
 
-	interval time.Duration
-	ttl      time.Duration
+	interval    time.Duration
+	ttl         time.Duration
+	maxAttempts int
+	baseDelay   time.Duration
 }
 
 // NewWorker creates a new worker instance.
-func NewWorker(id, group string, consumer queue.Consumer, acker queue.Acker, hb Heartbeater, proc Processor, interval, ttl time.Duration) *Worker {
+func NewWorker(id, group string, consumer queue.Consumer, acker queue.Acker, retrier queue.Retrier, hb Heartbeater, proc Processor, recorder EventFailureRecorder, updater EventStatusUpdater, interval, ttl time.Duration, maxAttempts int, baseDelay time.Duration) *Worker {
 	return &Worker{
 		id:          id,
 		group:       group,
 		status:      StatusStopped,
 		consumer:    consumer,
 		acker:       acker,
+		retrier:     retrier,
 		heartbeater: hb,
 		processor:   proc,
+		recorder:    recorder,
+		updater:     updater,
 		interval:    interval,
 		ttl:         ttl,
+		maxAttempts: maxAttempts,
+		baseDelay:   baseDelay,
 	}
 }
 
@@ -187,7 +207,7 @@ func (w *Worker) runJobLoop(ctx context.Context) {
 		err = w.processor.Process(jobCtx, job.Event)
 		if err != nil {
 			log.Printf("[Worker %s] Process error for job %s: %v", w.id, job.Event.ID, err)
-			// Retries / DLQ are Phase 10. For Phase 6, we just log.
+			w.handleFailure(ctx, jobCtx, job)
 		} else {
 			// Acknowledge the job on success
 			if err := w.acker.Ack(jobCtx, job); err != nil {
@@ -200,4 +220,53 @@ func (w *Worker) runJobLoop(ctx context.Context) {
 			w.setStatus(StatusReady)
 		}
 	}
+}
+
+func (w *Worker) handleFailure(ctx, jobCtx context.Context, job *queue.Job) {
+	// 1. Record the failure in PostgreSQL. This is atomic.
+	nextStatus, err := w.recorder.RecordFailure(jobCtx, job.Event.ID, w.maxAttempts)
+	if err != nil {
+		log.Printf("[Worker %s] Failed to record failure for job %s: %v", w.id, job.Event.ID, err)
+		return
+	}
+
+	job.Event.Attempt++ // keep local object in sync
+
+	if nextStatus == event.StatusFailed {
+		// Permanently failed. Ack from Redis to drop it from PEL.
+		if err := w.acker.Ack(jobCtx, job); err != nil {
+			log.Printf("[Worker %s] Ack error for permanently failed job %s: %v", w.id, job.Event.ID, err)
+		}
+		return
+	}
+
+	// It's RETRYING. We schedule the requeue.
+	delay := CalculateBackoff(job.Event.Attempt, w.baseDelay)
+
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+
+		select {
+		case <-time.After(delay):
+			// Proceed with requeue.
+			// IMPORTANT ORDERING as requested:
+			// 1. Publish to Redis & Ack old (using a background context so it's not cancelled by Worker shutdown if we got this far)
+			if err := w.retrier.Retry(context.Background(), job); err != nil {
+				log.Printf("[Worker %s] Failed to requeue job %s in Redis: %v", w.id, job.Event.ID, err)
+				// Do not update Postgres. The event stays in RETRYING and will be recovered by Phase 14.
+				return
+			}
+
+			// 2. Update PostgreSQL from RETRYING -> QUEUED
+			if err := w.updater.UpdateStatus(context.Background(), job.Event.ID, event.StatusRetrying, event.StatusQueued); err != nil {
+				log.Printf("[Worker %s] Failed to update job %s to QUEUED after Redis requeue: %v", w.id, job.Event.ID, err)
+			}
+		case <-ctx.Done():
+			// Worker is shutting down. Do not block shutdown, just exit.
+			// Message remains un-acked in Redis PEL and status remains RETRYING in PostgreSQL.
+			log.Printf("[Worker %s] Aborting scheduled retry for job %s due to shutdown", w.id, job.Event.ID)
+			return
+		}
+	}()
 }

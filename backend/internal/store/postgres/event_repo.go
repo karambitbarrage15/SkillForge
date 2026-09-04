@@ -124,3 +124,57 @@ func (r *EventRepo) List(ctx context.Context, limit, offset int) ([]*event.Event
 
 	return events, nil
 }
+
+func (r *EventRepo) RecordFailure(ctx context.Context, id uuid.UUID, maxAttempts int) (event.EventStatus, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+
+	var currentStatus event.EventStatus
+	var currentAttempt int
+	err = tx.QueryRow(ctx, "SELECT status, attempt FROM events WHERE id = $1 FOR UPDATE", id).Scan(&currentStatus, &currentAttempt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", store.ErrEventNotFound
+		}
+		return "", err
+	}
+
+	if currentStatus != event.StatusProcessing {
+		return "", store.ErrInvalidStateTransition
+	}
+
+	newAttempt := currentAttempt + 1
+	var nextStatus event.EventStatus
+
+	if newAttempt < maxAttempts {
+		nextStatus = event.StatusRetrying
+	} else {
+		nextStatus = event.StatusFailed
+	}
+
+	if !event.IsValidTransition(currentStatus, nextStatus) {
+		return "", store.ErrInvalidStateTransition
+	}
+
+	now := time.Now()
+	var q string
+	var args []any
+
+	if nextStatus == event.StatusFailed {
+		q = `UPDATE events SET status = $1, attempt = $2, updated_at = $3, completed_at = $4 WHERE id = $5`
+		args = []any{nextStatus, newAttempt, now, now, id}
+	} else {
+		q = `UPDATE events SET status = $1, attempt = $2, updated_at = $3 WHERE id = $4`
+		args = []any{nextStatus, newAttempt, now, id}
+	}
+
+	_, err = tx.Exec(ctx, q, args...)
+	if err != nil {
+		return "", err
+	}
+
+	return nextStatus, tx.Commit(ctx)
+}

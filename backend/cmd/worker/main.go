@@ -11,6 +11,7 @@ import (
 	"streamforge/internal/event"
 	"streamforge/internal/processor"
 	"streamforge/internal/queue/redis"
+	"streamforge/internal/store/postgres"
 	"streamforge/internal/worker"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -29,8 +30,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cfg.DatabaseURL == "" {
+		logger.Error("DATABASE_URL is required")
+		os.Exit(1)
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	db, err := postgres.NewDB(ctx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("failed to connect to postgres", "err", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	repo := postgres.NewEventRepo(db)
 
 	opts, err := goredis.ParseURL(cfg.RedisURL)
 	if err != nil {
@@ -86,10 +101,15 @@ func main() {
 		cfg.WorkerConsumerGroup,
 		rQueue,
 		rQueue,
+		rQueue,
 		heartbeater,
 		registry,
+		repo,
+		repo,
 		cfg.HeartbeatInterval,
 		cfg.HeartbeatTTL,
+		3,             // maxAttempts
+		1*time.Second, // baseDelay
 	)
 
 	logger.Info("Starting worker pool", "count", cfg.WorkerCount, "group", cfg.WorkerConsumerGroup)
