@@ -9,19 +9,12 @@ import (
 
 	"streamforge/internal/config"
 	"streamforge/internal/event"
+	"streamforge/internal/processor"
 	"streamforge/internal/queue/redis"
 	"streamforge/internal/worker"
 
 	goredis "github.com/redis/go-redis/v9"
 )
-
-// NoOpProcessor is a temporary processor used only for Phase 7 infrastructure testing.
-type NoOpProcessor struct{}
-
-func (p *NoOpProcessor) Process(ctx context.Context, e *event.Event) error {
-	slog.Info("Dummy processing event", "id", e.ID, "type", e.Type)
-	return nil
-}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -59,7 +52,34 @@ func main() {
 	}
 
 	heartbeater := worker.NewRedisHeartbeater(rdb)
-	proc := &NoOpProcessor{}
+
+	registry := processor.NewRegistry()
+
+	// Register dummy processors
+	if err := registry.Register(event.TypeOrderCreated, processor.NewOrderProcessor()); err != nil {
+		logger.Error("failed to register processor", "err", err)
+		os.Exit(1)
+	}
+	if err := registry.Register(event.TypePaymentSuccess, processor.NewPaymentSuccessProcessor()); err != nil {
+		logger.Error("failed to register processor", "err", err)
+		os.Exit(1)
+	}
+	if err := registry.Register(event.TypePaymentFailed, processor.NewPaymentFailedProcessor()); err != nil {
+		logger.Error("failed to register processor", "err", err)
+		os.Exit(1)
+	}
+	if err := registry.Register(event.TypeInventoryUpdated, processor.NewInventoryProcessor()); err != nil {
+		logger.Error("failed to register processor", "err", err)
+		os.Exit(1)
+	}
+	if err := registry.Register(event.TypeOrderCancelled, processor.NewOrderCancelledProcessor()); err != nil {
+		logger.Error("failed to register processor", "err", err)
+		os.Exit(1)
+	}
+	if err := registry.Register(event.TypeUserRegistered, processor.NewUserRegisteredProcessor()); err != nil {
+		logger.Error("failed to register processor", "err", err)
+		os.Exit(1)
+	}
 
 	pool := worker.NewPool(
 		cfg.WorkerCount,
@@ -67,7 +87,7 @@ func main() {
 		rQueue,
 		rQueue,
 		heartbeater,
-		proc,
+		registry,
 		cfg.HeartbeatInterval,
 		cfg.HeartbeatTTL,
 	)
