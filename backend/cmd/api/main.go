@@ -18,8 +18,11 @@ import (
 
 	"streamforge/internal/api"
 	"streamforge/internal/config"
-	"streamforge/internal/queue"
+
+	"streamforge/internal/queue/redis"
 	"streamforge/internal/store/postgres"
+
+	goredis "github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -35,9 +38,22 @@ func main() {
 	}
 	defer db.Close()
 
-	// Initialize repositories and publisher stub
+	// Initialize Redis connection
+	opts, err := goredis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		logger.Error("failed to parse redis url", "err", err)
+		os.Exit(1)
+	}
+	rdb := goredis.NewClient(opts)
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		logger.Error("failed to connect to redis", "err", err)
+		os.Exit(1)
+	}
+	defer rdb.Close()
+
+	// Initialize repositories and publisher
 	eventRepo := postgres.NewEventRepo(db)
-	publisher := &queue.NoopPublisher{}
+	publisher := redis.NewRedisQueue(rdb)
 
 	eventHandler := api.NewEventHandler(eventRepo, publisher)
 

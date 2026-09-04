@@ -19,6 +19,9 @@ type Config struct {
 
 	// Database
 	DatabaseURL string
+
+	// Redis
+	RedisURL string
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -30,6 +33,7 @@ func Load() Config {
 		WriteTimeout:    getDuration("WRITE_TIMEOUT_SECONDS", 10),
 		ShutdownTimeout: getDuration("SHUTDOWN_TIMEOUT_SECONDS", 30),
 		DatabaseURL:     getEnv("DATABASE_URL", ""),
+		RedisURL:        getEnv("REDIS_URL", ""),
 	}
 }
 
