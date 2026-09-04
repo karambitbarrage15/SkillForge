@@ -1,40 +1,86 @@
-// Package main is the entry point for the StreamForge worker process.
-//
-// The worker process hosts:
-//   - The bounded worker pool (Phase 7)
-//   - Per-worker heartbeat goroutines (Phase 6)
-//   - The processor registry (Phase 9)
-//   - The scheduler goroutine for failure recovery (Phase 14)
-//
-// Phase 1: process starts, logs readiness, and waits for a shutdown signal.
-// Subsequent phases will wire in the actual worker pool and dependencies.
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"streamforge/internal/config"
+	"streamforge/internal/event"
+	"streamforge/internal/queue/redis"
+	"streamforge/internal/worker"
+
+	goredis "github.com/redis/go-redis/v9"
 )
+
+// NoOpProcessor is a temporary processor used only for Phase 7 infrastructure testing.
+type NoOpProcessor struct{}
+
+func (p *NoOpProcessor) Process(ctx context.Context, e *event.Event) error {
+	slog.Info("Dummy processing event", "id", e.ID, "type", e.Type)
+	return nil
+}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+
+	logger.Info("Starting StreamForge Worker Pool...")
+
 	cfg := config.Load()
 
-	// cfg will be used by the worker pool in Phase 7.
-	_ = cfg
+	if cfg.RedisURL == "" {
+		logger.Error("REDIS_URL is required")
+		os.Exit(1)
+	}
 
-	logger.Info("worker process starting")
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 
-	// Block until shutdown signal.
-	// Phase 6 will replace this with the worker pool lifecycle.
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
-	sig := <-quit
+	opts, err := goredis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		logger.Error("failed to parse redis url", "err", err)
+		os.Exit(1)
+	}
+	rdb := goredis.NewClient(opts)
+	defer rdb.Close()
 
-	logger.Info("worker process stopping", "signal", sig)
-	// Phase 7 will drain in-flight jobs here before exiting.
-	logger.Info("worker process stopped")
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		logger.Error("failed to connect to redis", "err", err)
+		os.Exit(1)
+	}
+
+	rQueue := redis.NewRedisQueue(rdb)
+	if err := rQueue.InitConsumerGroups(ctx, cfg.WorkerConsumerGroup); err != nil {
+		logger.Error("failed to initialize consumer groups", "err", err)
+		os.Exit(1)
+	}
+
+	heartbeater := worker.NewRedisHeartbeater(rdb)
+	proc := &NoOpProcessor{}
+
+	pool := worker.NewPool(
+		cfg.WorkerCount,
+		cfg.WorkerConsumerGroup,
+		rQueue,
+		rQueue,
+		heartbeater,
+		proc,
+		cfg.HeartbeatInterval,
+		cfg.HeartbeatTTL,
+	)
+
+	logger.Info("Starting worker pool", "count", cfg.WorkerCount, "group", cfg.WorkerConsumerGroup)
+	if err := pool.Start(ctx); err != nil {
+		logger.Error("failed to start worker pool", "err", err)
+		os.Exit(1)
+	}
+
+	<-ctx.Done()
+	logger.Info("Received shutdown signal, stopping pool gracefully...")
+
+	pool.Stop()
+	logger.Info("Worker pool stopped cleanly.")
 }
