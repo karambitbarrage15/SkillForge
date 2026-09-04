@@ -52,6 +52,7 @@ type EventRepository interface {
 	// It returns ErrEventNotFound if the ID doesn't exist.
 	// It returns ErrInvalidStateTransition if the ID exists but the status does not match old.
 	UpdateStatus(ctx context.Context, id uuid.UUID, old, new event.EventStatus) error
+	List(ctx context.Context, limit, offset int) ([]*event.Event, error)
 }
 
 // WorkerRepository tracks active workers.

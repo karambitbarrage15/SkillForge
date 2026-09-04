@@ -12,12 +12,16 @@ import (
 	"github.com/google/uuid"
 
 	"streamforge/internal/event"
+	"streamforge/internal/store"
 )
 
 // MockRepo tracks calls to assert ordering and passes/fails based on config
 type MockRepo struct {
 	FailCreate bool
+	FailGet    bool
+	FailList   bool
 	Created    *event.Event
+	ListResult []*event.Event
 	CallOrder  *[]string
 }
 
@@ -32,7 +36,23 @@ func (m *MockRepo) Create(ctx context.Context, e *event.Event) error {
 	return nil
 }
 
-func (m *MockRepo) GetByID(ctx context.Context, id uuid.UUID) (*event.Event, error) { return nil, nil }
+func (m *MockRepo) GetByID(ctx context.Context, id uuid.UUID) (*event.Event, error) {
+	if m.FailGet {
+		return nil, errors.New("db error")
+	}
+	if m.Created != nil && m.Created.ID == id {
+		return m.Created, nil
+	}
+	return nil, store.ErrEventNotFound
+}
+
+func (m *MockRepo) List(ctx context.Context, limit, offset int) ([]*event.Event, error) {
+	if m.FailList {
+		return nil, errors.New("db error")
+	}
+	return m.ListResult, nil
+}
+
 func (m *MockRepo) UpdateStatus(ctx context.Context, id uuid.UUID, old, new event.EventStatus) error {
 	return nil
 }
@@ -159,6 +179,128 @@ func TestHandleCreateEvent(t *testing.T) {
 
 			if tt.verifyFn != nil {
 				tt.verifyFn(t, repo, pub, rr)
+			}
+		})
+	}
+}
+
+func TestHandleGetEventByID(t *testing.T) {
+	e := &event.Event{ID: uuid.New(), Status: event.StatusReceived}
+
+	tests := []struct {
+		name           string
+		idParam        string
+		repoFail       bool
+		setupRepo      func(*MockRepo)
+		expectedStatus int
+	}{
+		{
+			name:           "Valid UUID",
+			idParam:        e.ID.String(),
+			setupRepo:      func(m *MockRepo) { m.Created = e },
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Invalid UUID",
+			idParam:        "not-a-uuid",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Not Found",
+			idParam:        uuid.New().String(),
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "Database Error",
+			idParam:        e.ID.String(),
+			repoFail:       true,
+			expectedStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &MockRepo{FailGet: tt.repoFail}
+			if tt.setupRepo != nil {
+				tt.setupRepo(repo)
+			}
+			pub := &MockPublisher{}
+			handler := NewEventHandler(repo, pub)
+
+			// We need to use http.NewServeMux to resolve PathValues in Go 1.22
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /events/{id}", handler.HandleGetEventByID)
+
+			req := httptest.NewRequest(http.MethodGet, "/events/"+tt.idParam, nil)
+			rr := httptest.NewRecorder()
+
+			mux.ServeHTTP(rr, req)
+
+			if status := rr.Code; status != tt.expectedStatus {
+				t.Errorf("Handler returned wrong status code: got %v want %v", status, tt.expectedStatus)
+			}
+		})
+	}
+}
+
+func TestHandleListEvents(t *testing.T) {
+	tests := []struct {
+		name           string
+		queryParams    string
+		repoFail       bool
+		expectedStatus int
+	}{
+		{
+			name:           "Default Params",
+			queryParams:    "",
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Valid Params",
+			queryParams:    "?limit=10&offset=5",
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Invalid Limit Format",
+			queryParams:    "?limit=abc",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Limit Too High",
+			queryParams:    "?limit=101",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Invalid Offset Format",
+			queryParams:    "?offset=abc",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Negative Offset",
+			queryParams:    "?offset=-1",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Database Error",
+			queryParams:    "",
+			repoFail:       true,
+			expectedStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &MockRepo{FailList: tt.repoFail, ListResult: make([]*event.Event, 0)}
+			pub := &MockPublisher{}
+			handler := NewEventHandler(repo, pub)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/events"+tt.queryParams, nil)
+			rr := httptest.NewRecorder()
+
+			handler.HandleListEvents(rr, req)
+
+			if status := rr.Code; status != tt.expectedStatus {
+				t.Errorf("Handler returned wrong status code: got %v want %v", status, tt.expectedStatus)
 			}
 		})
 	}

@@ -162,3 +162,48 @@ func TestContextCancellation(t *testing.T) {
 		t.Error("Expected error from cancelled context, got nil")
 	}
 }
+
+func TestEventRepo_List(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	repo := NewEventRepo(db)
+	ctx := context.Background()
+
+	// Insert 3 events
+	for i := 0; i < 3; i++ {
+		e := &event.Event{
+			ID:        uuid.New(),
+			Type:      event.TypeOrderCreated,
+			Payload:   json.RawMessage(`{}`),
+			Priority:  event.PriorityNormal,
+			Status:    event.StatusReceived,
+			CreatedAt: time.Now().Add(time.Duration(i) * time.Second), // i=2 is newest
+			UpdatedAt: time.Now(),
+		}
+		if err := repo.Create(ctx, e); err != nil {
+			t.Fatalf("Failed to create event: %v", err)
+		}
+	}
+
+	// Test List with limit 2, offset 0
+	events, err := repo.List(ctx, 2, 0)
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("Expected 2 events, got %d", len(events))
+	}
+	// Verify descending order (newest first)
+	if events[0].CreatedAt.Before(events[1].CreatedAt) {
+		t.Errorf("Expected descending order, but events[0] is older than events[1]")
+	}
+
+	// Test offset 2 (should return the remaining 1 event)
+	events, err = repo.List(ctx, 2, 2)
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Errorf("Expected 1 event, got %d", len(events))
+	}
+}

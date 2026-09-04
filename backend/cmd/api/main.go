@@ -45,6 +45,8 @@ func main() {
 	mux.HandleFunc("GET /health", handleHealth)
 	mux.HandleFunc("GET /ready", handleReady)
 	mux.HandleFunc("POST /api/v1/events", eventHandler.HandleCreateEvent)
+	mux.HandleFunc("GET /api/v1/events/{id}", eventHandler.HandleGetEventByID)
+	mux.HandleFunc("GET /api/v1/events", eventHandler.HandleListEvents)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.HTTPPort,

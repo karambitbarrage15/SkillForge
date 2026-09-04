@@ -80,3 +80,31 @@ func (r *EventRepo) UpdateStatus(ctx context.Context, id uuid.UUID, old, new eve
 
 	return tx.Commit(ctx)
 }
+
+func (r *EventRepo) List(ctx context.Context, limit, offset int) ([]*event.Event, error) {
+	q := `SELECT id, type, payload, priority, status, attempt, worker_id, created_at, updated_at, completed_at
+		  FROM events 
+		  ORDER BY created_at DESC 
+		  LIMIT $1 OFFSET $2`
+
+	rows, err := r.pool.Query(ctx, q, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []*event.Event
+	for rows.Next() {
+		var e event.Event
+		if err := rows.Scan(&e.ID, &e.Type, &e.Payload, &e.Priority, &e.Status, &e.Attempt, &e.WorkerID, &e.CreatedAt, &e.UpdatedAt, &e.CompletedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, &e)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return events, nil
+}

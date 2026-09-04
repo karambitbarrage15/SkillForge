@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -76,5 +77,72 @@ func (h *EventHandler) HandleCreateEvent(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusAccepted)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slog.Error("Failed to encode response", "err", err, "event_id", e.ID)
+	}
+}
+
+// HandleGetEventByID processes GET /api/v1/events/{id}
+func (h *EventHandler) HandleGetEventByID(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		http.Error(w, `{"error":"invalid event ID format"}`, http.StatusBadRequest)
+		return
+	}
+
+	e, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		if err == store.ErrEventNotFound {
+			http.Error(w, `{"error":"event not found"}`, http.StatusNotFound)
+			return
+		}
+		slog.Error("Failed to get event", "err", err, "event_id", id)
+		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(e); err != nil {
+		slog.Error("Failed to encode response", "err", err, "event_id", id)
+	}
+}
+
+// HandleListEvents processes GET /api/v1/events
+func (h *EventHandler) HandleListEvents(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	offset := 0
+
+	if l := r.URL.Query().Get("limit"); l != "" {
+		parsed, err := strconv.Atoi(l)
+		if err != nil || parsed < 1 || parsed > 100 {
+			http.Error(w, `{"error":"invalid limit parameter"}`, http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+
+	if o := r.URL.Query().Get("offset"); o != "" {
+		parsed, err := strconv.Atoi(o)
+		if err != nil || parsed < 0 {
+			http.Error(w, `{"error":"invalid offset parameter"}`, http.StatusBadRequest)
+			return
+		}
+		offset = parsed
+	}
+
+	events, err := h.repo.List(r.Context(), limit, offset)
+	if err != nil {
+		slog.Error("Failed to list events", "err", err)
+		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Ensure we return an empty array instead of null if no events
+	if events == nil {
+		events = make([]*event.Event, 0)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(events); err != nil {
+		slog.Error("Failed to encode response", "err", err)
 	}
 }
