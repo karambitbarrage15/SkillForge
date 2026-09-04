@@ -16,6 +16,9 @@ type Config struct {
 	ReadTimeout     time.Duration
 	WriteTimeout    time.Duration
 	ShutdownTimeout time.Duration
+
+	// Database
+	DatabaseURL string
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -26,6 +29,7 @@ func Load() Config {
 		ReadTimeout:     getDuration("READ_TIMEOUT_SECONDS", 10),
 		WriteTimeout:    getDuration("WRITE_TIMEOUT_SECONDS", 10),
 		ShutdownTimeout: getDuration("SHUTDOWN_TIMEOUT_SECONDS", 30),
+		DatabaseURL:     getEnv("DATABASE_URL", ""),
 	}
 }
 

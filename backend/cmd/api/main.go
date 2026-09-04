@@ -16,16 +16,35 @@ import (
 	"os/signal"
 	"syscall"
 
+	"streamforge/internal/api"
 	"streamforge/internal/config"
+	"streamforge/internal/queue"
+	"streamforge/internal/store/postgres"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg := config.Load()
 
+	// Initialize database connection
+	ctx := context.Background()
+	db, err := postgres.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("failed to connect to database", "err", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	// Initialize repositories and publisher stub
+	eventRepo := postgres.NewEventRepo(db)
+	publisher := &queue.NoopPublisher{}
+
+	eventHandler := api.NewEventHandler(eventRepo, publisher)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
 	mux.HandleFunc("GET /ready", handleReady)
+	mux.HandleFunc("POST /api/v1/events", eventHandler.HandleCreateEvent)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.HTTPPort,

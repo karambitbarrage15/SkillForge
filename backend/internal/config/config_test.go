@@ -13,6 +13,7 @@ func TestLoadDefaults(t *testing.T) {
 		"READ_TIMEOUT_SECONDS",
 		"WRITE_TIMEOUT_SECONDS",
 		"SHUTDOWN_TIMEOUT_SECONDS",
+		"DATABASE_URL",
 	}
 	for _, v := range vars {
 		os.Unsetenv(v)
@@ -32,6 +33,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ShutdownTimeout != 30*time.Second {
 		t.Errorf("ShutdownTimeout: got %v, want %v", cfg.ShutdownTimeout, 30*time.Second)
 	}
+	if cfg.DatabaseURL != "" {
+		t.Errorf("DatabaseURL: got %q, want empty", cfg.DatabaseURL)
+	}
 }
 
 func TestLoadFromEnv(t *testing.T) {
@@ -39,11 +43,13 @@ func TestLoadFromEnv(t *testing.T) {
 	os.Setenv("READ_TIMEOUT_SECONDS", "5")
 	os.Setenv("WRITE_TIMEOUT_SECONDS", "15")
 	os.Setenv("SHUTDOWN_TIMEOUT_SECONDS", "60")
+	os.Setenv("DATABASE_URL", "postgres://test")
 	defer func() {
 		os.Unsetenv("HTTP_PORT")
 		os.Unsetenv("READ_TIMEOUT_SECONDS")
 		os.Unsetenv("WRITE_TIMEOUT_SECONDS")
 		os.Unsetenv("SHUTDOWN_TIMEOUT_SECONDS")
+		os.Unsetenv("DATABASE_URL")
 	}()
 
 	cfg := Load()
@@ -59,6 +65,9 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.ShutdownTimeout != 60*time.Second {
 		t.Errorf("ShutdownTimeout: got %v, want %v", cfg.ShutdownTimeout, 60*time.Second)
+	}
+	if cfg.DatabaseURL != "postgres://test" {
+		t.Errorf("DatabaseURL: got %q, want %q", cfg.DatabaseURL, "postgres://test")
 	}
 }
 
