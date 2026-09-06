@@ -2,7 +2,7 @@ package worker
 
 import (
 	"context"
-	"log"
+	"log/slog"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -21,7 +21,7 @@ func (b *RedisBroadcaster) Broadcast(ctx context.Context, payload []byte) {
 	go func(data string) {
 		err := b.client.Publish(context.Background(), "ws:events", data).Err()
 		if err != nil {
-			log.Printf("[RedisBroadcaster] Failed to broadcast message: %v", err)
+			slog.Error("[RedisBroadcaster] Failed to broadcast message", "err", err)
 		}
 	}(string(payload))
 }

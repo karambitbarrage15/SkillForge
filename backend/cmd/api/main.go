@@ -15,14 +15,17 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"streamforge/internal/api"
 	"streamforge/internal/config"
 
 	"streamforge/internal/queue/redis"
+	"streamforge/internal/scheduler"
 	"streamforge/internal/store/postgres"
 	"streamforge/internal/websocket"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -59,6 +62,10 @@ func main() {
 	hub := websocket.NewHub(rdb)
 	go hub.Run(ctx)
 
+	// Phase 14: Scheduler for failure recovery
+	sched := scheduler.NewScheduler(eventRepo, rdb, publisher, 30*time.Second)
+	go sched.Start(ctx)
+
 	eventHandler := api.NewEventHandler(eventRepo, publisher, hub, rdb)
 
 	mux := http.NewServeMux()
@@ -68,6 +75,7 @@ func main() {
 	mux.HandleFunc("GET /api/v1/events/{id}", eventHandler.HandleGetEventByID)
 	mux.HandleFunc("GET /api/v1/events", eventHandler.HandleListEvents)
 	mux.HandleFunc("GET /ws", eventHandler.ServeWs)
+	mux.Handle("GET /metrics", promhttp.Handler())
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.HTTPPort,

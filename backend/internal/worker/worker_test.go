@@ -86,6 +86,11 @@ func (m *MockEventStatusUpdater) UpdateStatus(ctx context.Context, id uuid.UUID,
 	return nil
 }
 
+func (m *MockEventStatusUpdater) AssignEvent(ctx context.Context, id uuid.UUID, workerID string, old, new event.EventStatus) error {
+	atomic.AddInt32(&m.updated, 1)
+	return nil
+}
+
 func (m *MockEventStatusUpdater) FinalizeEvent(ctx context.Context, id uuid.UUID, resultHash string) error {
 	atomic.AddInt32(&m.updated, 1)
 	return nil

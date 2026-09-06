@@ -53,9 +53,11 @@ type EventRepository interface {
 	// It returns ErrEventNotFound if the ID doesn't exist.
 	// It returns ErrInvalidStateTransition if the ID exists but the status does not match old.
 	UpdateStatus(ctx context.Context, id uuid.UUID, old, new event.EventStatus) error
+	AssignEvent(ctx context.Context, id uuid.UUID, workerID string, old, new event.EventStatus) error
 	// FinalizeEvent sets the event to COMPLETED and records the result in the idempotency table atomically.
 	FinalizeEvent(ctx context.Context, id uuid.UUID, resultHash string) error
 	List(ctx context.Context, limit, offset int) ([]*event.Event, error)
+	GetStaleEvents(ctx context.Context, status event.EventStatus, updatedBefore time.Time) ([]*event.Event, error)
 }
 
 // WorkerRepository tracks active workers.

@@ -13,6 +13,7 @@ import (
 type Config struct {
 	// HTTP
 	HTTPPort        string
+	HTTPMetricsPort string
 	ReadTimeout     time.Duration
 	WriteTimeout    time.Duration
 	ShutdownTimeout time.Duration
@@ -35,6 +36,7 @@ type Config struct {
 func Load() Config {
 	return Config{
 		HTTPPort:            getEnv("HTTP_PORT", "8080"),
+		HTTPMetricsPort:     getEnv("HTTP_METRICS_PORT", "9090"),
 		ReadTimeout:         getDuration("READ_TIMEOUT_SECONDS", 10),
 		WriteTimeout:        getDuration("WRITE_TIMEOUT_SECONDS", 10),
 		ShutdownTimeout:     getDuration("SHUTDOWN_TIMEOUT_SECONDS", 30),

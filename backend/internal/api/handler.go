@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"streamforge/internal/event"
+	"streamforge/internal/metrics"
 	"streamforge/internal/queue"
 	"streamforge/internal/store"
 	"streamforge/internal/websocket"
@@ -84,6 +85,12 @@ func (h *EventHandler) HandleCreateEvent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Phase 8: Transition from RECEIVED to QUEUED
+	if err := h.repo.UpdateStatus(r.Context(), e.ID, event.StatusReceived, event.StatusQueued); err != nil {
+		slog.Error("Failed to transition event to QUEUED", "err", err, "event_id", e.ID)
+		// Non-fatal for the client, the worker will eventually pick it up
+	}
+
 	// Non-critical: Broadcast EVENT_RECEIVED
 	go func(id uuid.UUID) {
 		if h.rdb == nil {
@@ -97,6 +104,10 @@ func (h *EventHandler) HandleCreateEvent(w http.ResponseWriter, r *http.Request)
 		// Publish to Redis PubSub for all hubs
 		h.rdb.Publish(context.Background(), websocket.RedisPubSubChannel, string(b))
 	}(e.ID)
+
+	// Phase 15: Observability
+	// Increment successfully accepted/validated event submissions.
+	metrics.EventsReceived.WithLabelValues(string(e.Type)).Inc()
 
 	resp := CreateEventResponse{
 		ID:     e.ID,

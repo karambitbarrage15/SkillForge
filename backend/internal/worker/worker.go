@@ -3,7 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"strconv"
 	"sync"
 	"time"
@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"streamforge/internal/event"
+	"streamforge/internal/metrics"
 	"streamforge/internal/queue"
 	"streamforge/internal/store"
 )
@@ -38,6 +39,7 @@ type EventFailureRecorder interface {
 
 type EventStatusUpdater interface {
 	UpdateStatus(ctx context.Context, id uuid.UUID, old, new event.EventStatus) error
+	AssignEvent(ctx context.Context, id uuid.UUID, workerID string, old, new event.EventStatus) error
 	FinalizeEvent(ctx context.Context, id uuid.UUID, resultHash string) error
 }
 
@@ -164,7 +166,7 @@ func (w *Worker) runHeartbeat(ctx context.Context) {
 
 	// Initial ping
 	if err := w.heartbeater.Ping(ctx, w.id, w.ttl); err != nil {
-		log.Printf("[Worker %s] Initial heartbeat failed: %v", w.id, err)
+		slog.Error("Initial heartbeat failed", "worker_id", w.id, "err", err)
 	}
 
 	ticker := time.NewTicker(w.interval)
@@ -177,7 +179,7 @@ func (w *Worker) runHeartbeat(ctx context.Context) {
 		case <-ticker.C:
 			if err := w.heartbeater.Ping(ctx, w.id, w.ttl); err != nil {
 				// We log but do NOT crash the worker.
-				log.Printf("[Worker %s] Heartbeat failed: %v", w.id, err)
+				slog.Error("Heartbeat failed", "worker_id", w.id, "err", err)
 			}
 		}
 	}
@@ -200,7 +202,7 @@ func (w *Worker) runJobLoop(ctx context.Context) {
 			}
 
 			// Otherwise log and apply a short backoff to prevent CPU spinning on persistent errors
-			log.Printf("[Worker %s] Consume error: %v", w.id, err)
+			slog.Error("Consume error", "worker_id", w.id, "err", err)
 			select {
 			case <-time.After(1 * time.Second):
 				continue
@@ -212,7 +214,17 @@ func (w *Worker) runJobLoop(ctx context.Context) {
 		// Process the job
 		w.setStatus(StatusBusy)
 
-		// Create a timeout context for the processor, bound by the worker's context
+		// Phase 8 & 14: Database state machine transition to PROCESSING with worker assignment
+		if err := w.updater.AssignEvent(ctx, job.Event.ID, w.id, event.StatusQueued, event.StatusProcessing); err != nil {
+			if errors.Is(err, store.ErrInvalidStateTransition) {
+				slog.Info("Job is no longer QUEUED (state conflict). Acking to discard duplicate.", "worker_id", w.id, "event_id", job.Event.ID)
+				w.acker.Ack(ctx, job)
+			} else {
+				slog.Error("Failed to assign job to PROCESSING due to infra error", "worker_id", w.id, "event_id", job.Event.ID, "err", err)
+			}
+			w.setStatus(StatusReady)
+			continue
+		}
 		// Wait, user requirements say:
 		// "8. If a job is already being processed when shutdown begins, allow the current processor call to finish before the worker reaches STOPPED, as specified by WORKER_POOL.md."
 		// Thus, we pass a background-derived context to Processor if we want to allow it to finish, OR we just pass a context that is not cancelled when `ctx` is cancelled.
@@ -228,7 +240,7 @@ func (w *Worker) runJobLoop(ctx context.Context) {
 
 		err = w.processor.Process(jobCtx, job.Event)
 		if err != nil {
-			log.Printf("[Worker %s] Process error for job %s: %v", w.id, job.Event.ID, err)
+			slog.Error("Process error for job", "worker_id", w.id, "event_id", job.Event.ID, "err", err)
 			w.handleFailure(ctx, jobCtx, job)
 		} else {
 			// Phase 11: Idempotent atomic finalization
@@ -237,18 +249,22 @@ func (w *Worker) runJobLoop(ctx context.Context) {
 			err := w.updater.FinalizeEvent(jobCtx, job.Event.ID, resultHash)
 			if err != nil {
 				if errors.Is(err, store.ErrAlreadyFinalized) {
-					log.Printf("[Worker %s] Job %s was already finalized. Acknowledging duplicate.", w.id, job.Event.ID)
+					slog.Info("Job was already finalized. Acknowledging duplicate.", "worker_id", w.id, "event_id", job.Event.ID)
 					if err := w.acker.Ack(jobCtx, job); err != nil {
-						log.Printf("[Worker %s] Ack error for duplicate job %s: %v", w.id, job.Event.ID, err)
+						slog.Error("Ack error for duplicate job", "worker_id", w.id, "event_id", job.Event.ID, "err", err)
 					}
 				} else {
-					log.Printf("[Worker %s] Failed to finalize event %s: %v", w.id, job.Event.ID, err)
+					slog.Error("Failed to finalize event", "worker_id", w.id, "event_id", job.Event.ID, "err", err)
 				}
 			} else {
 				// Acknowledge the job on success
 				if err := w.acker.Ack(jobCtx, job); err != nil {
-					log.Printf("[Worker %s] Ack error for job %s: %v", w.id, job.Event.ID, err)
+					slog.Error("Ack error for job", "worker_id", w.id, "event_id", job.Event.ID, "err", err)
 				}
+				metrics.EventsProcessed.WithLabelValues(string(job.Event.Type)).Inc()
+				durSeconds := time.Since(startT).Seconds()
+				metrics.EventProcessingDuration.WithLabelValues(string(job.Event.Type)).Observe(durSeconds)
+
 				if w.broadcaster != nil {
 					// Broadcast completed
 					dur := time.Since(startT).Milliseconds()
@@ -272,7 +288,7 @@ func (w *Worker) handleFailure(ctx, jobCtx context.Context, job *queue.Job) {
 	// 1. Record the failure in PostgreSQL. This is atomic.
 	nextStatus, err := w.recorder.RecordFailure(jobCtx, job.Event.ID, w.maxAttempts)
 	if err != nil {
-		log.Printf("[Worker %s] Failed to record failure for job %s: %v", w.id, job.Event.ID, err)
+		slog.Error("Failed to record failure for job", "worker_id", w.id, "event_id", job.Event.ID, "err", err)
 		return
 	}
 
@@ -280,8 +296,9 @@ func (w *Worker) handleFailure(ctx, jobCtx context.Context, job *queue.Job) {
 
 	if nextStatus == event.StatusFailed {
 		// Permanently failed. Ack from Redis to drop it from PEL.
+		metrics.EventsFailed.WithLabelValues(string(job.Event.Type)).Inc()
 		if err := w.acker.Ack(jobCtx, job); err != nil {
-			log.Printf("[Worker %s] Ack error for permanently failed job %s: %v", w.id, job.Event.ID, err)
+			slog.Error("Ack error for permanently failed job", "worker_id", w.id, "event_id", job.Event.ID, "err", err)
 		}
 		if w.broadcaster != nil {
 			msg := `{"type":"EVENT_FAILED","event_id":"` + job.Event.ID.String() + `","attempt":` + strconv.Itoa(job.Event.Attempt) + `}`
@@ -303,19 +320,19 @@ func (w *Worker) handleFailure(ctx, jobCtx context.Context, job *queue.Job) {
 			// IMPORTANT ORDERING as requested:
 			// 1. Publish to Redis & Ack old (using a background context so it's not cancelled by Worker shutdown if we got this far)
 			if err := w.retrier.Retry(context.Background(), job); err != nil {
-				log.Printf("[Worker %s] Failed to requeue job %s in Redis: %v", w.id, job.Event.ID, err)
+				slog.Error("Failed to requeue job in Redis", "worker_id", w.id, "event_id", job.Event.ID, "err", err)
 				// Do not update Postgres. The event stays in RETRYING and will be recovered by Phase 14.
 				return
 			}
 
 			// 2. Update PostgreSQL from RETRYING -> QUEUED
 			if err := w.updater.UpdateStatus(context.Background(), job.Event.ID, event.StatusRetrying, event.StatusQueued); err != nil {
-				log.Printf("[Worker %s] Failed to update job %s to QUEUED after Redis requeue: %v", w.id, job.Event.ID, err)
+				slog.Error("Failed to update job to QUEUED after Redis requeue", "worker_id", w.id, "event_id", job.Event.ID, "err", err)
 			}
 		case <-ctx.Done():
 			// Worker is shutting down. Do not block shutdown, just exit.
 			// Message remains un-acked in Redis PEL and status remains RETRYING in PostgreSQL.
-			log.Printf("[Worker %s] Aborting scheduled retry for job %s due to shutdown", w.id, job.Event.ID)
+			slog.Info("Aborting scheduled retry for job due to shutdown", "worker_id", w.id, "event_id", job.Event.ID)
 			return
 		}
 	}()

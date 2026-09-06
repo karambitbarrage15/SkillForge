@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,6 +16,7 @@ import (
 	"streamforge/internal/worker"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -121,6 +123,20 @@ func main() {
 		logger.Error("failed to start worker pool", "err", err)
 		os.Exit(1)
 	}
+
+	// Start Prometheus metrics server
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		srv := &http.Server{
+			Addr:    ":" + cfg.HTTPMetricsPort,
+			Handler: mux,
+		}
+		logger.Info("Starting worker metrics server", "port", cfg.HTTPMetricsPort)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("Metrics server failed", "err", err)
+		}
+	}()
 
 	<-ctx.Done()
 	logger.Info("Received shutdown signal, stopping pool gracefully...")

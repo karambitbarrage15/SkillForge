@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -57,8 +58,16 @@ func (m *MockRepo) UpdateStatus(ctx context.Context, id uuid.UUID, old, new even
 	return nil
 }
 
+func (m *MockRepo) AssignEvent(ctx context.Context, id uuid.UUID, workerID string, old, new event.EventStatus) error {
+	return nil
+}
+
 func (m *MockRepo) FinalizeEvent(ctx context.Context, id uuid.UUID, resultHash string) error {
 	return nil
+}
+
+func (m *MockRepo) GetStaleEvents(ctx context.Context, status event.EventStatus, updatedBefore time.Time) ([]*event.Event, error) {
+	return nil, nil
 }
 
 // MockPublisher tracks calls and can simulate failures

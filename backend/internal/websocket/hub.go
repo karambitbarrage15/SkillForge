@@ -2,11 +2,12 @@ package websocket
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"streamforge/internal/metrics"
 )
 
 const RedisPubSubChannel = "ws:events"
@@ -48,12 +49,14 @@ func (h *Hub) Run(ctx context.Context) {
 		case client := <-h.register:
 			h.mu.Lock()
 			h.clients[client] = true
+			metrics.WebsocketConnections.Set(float64(len(h.clients)))
 			h.mu.Unlock()
 		case client := <-h.unregister:
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
 				close(client.send)
+				metrics.WebsocketConnections.Set(float64(len(h.clients)))
 			}
 			h.mu.Unlock()
 		case msg := <-h.broadcast:
@@ -66,6 +69,7 @@ func (h *Hub) Run(ctx context.Context) {
 					// We disconnect slow clients to prevent blocking the Hub.
 					delete(h.clients, client)
 					close(client.send)
+					metrics.WebsocketConnections.Set(float64(len(h.clients)))
 				}
 			}
 			h.mu.Unlock()
@@ -98,7 +102,7 @@ func (h *Hub) listenRedis(ctx context.Context) {
 			return
 		}
 
-		log.Println("Redis pubsub subscription lost, reconnecting in 1s...")
+		slog.Warn("Redis pubsub subscription lost, reconnecting in 1s...")
 		time.Sleep(1 * time.Second)
 	}
 }

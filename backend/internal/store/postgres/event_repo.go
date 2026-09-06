@@ -97,6 +97,62 @@ func (r *EventRepo) UpdateStatus(ctx context.Context, id uuid.UUID, old, new eve
 	return tx.Commit(ctx)
 }
 
+func (r *EventRepo) AssignEvent(ctx context.Context, id uuid.UUID, workerID string, old, new event.EventStatus) error {
+	if !event.IsValidTransition(old, new) {
+		return store.ErrInvalidStateTransition
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var currentStatus event.EventStatus
+	err = tx.QueryRow(ctx, "SELECT status FROM events WHERE id = $1 FOR UPDATE", id).Scan(&currentStatus)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return store.ErrEventNotFound
+		}
+		return err
+	}
+
+	if currentStatus != old {
+		return store.ErrInvalidStateTransition
+	}
+
+	var q string
+	var args []any
+	now := time.Now()
+
+	var parsedWorkerID *uuid.UUID
+	if workerID != "" {
+		p, err := uuid.Parse(workerID)
+		if err == nil {
+			parsedWorkerID = &p
+		}
+	}
+
+	if new == event.StatusCompleted {
+		q = `UPDATE events SET status = $1, worker_id = $2, updated_at = $3, completed_at = $4 WHERE id = $5 AND status = $6`
+		args = []any{new, parsedWorkerID, now, now, id, old}
+	} else {
+		q = `UPDATE events SET status = $1, worker_id = $2, updated_at = $3 WHERE id = $4 AND status = $5`
+		args = []any{new, parsedWorkerID, now, id, old}
+	}
+
+	res, err := tx.Exec(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+
+	if res.RowsAffected() == 0 {
+		return store.ErrInvalidStateTransition
+	}
+
+	return tx.Commit(ctx)
+}
+
 func (r *EventRepo) FinalizeEvent(ctx context.Context, id uuid.UUID, resultHash string) error {
 	if !event.IsValidTransition(event.StatusProcessing, event.StatusCompleted) {
 		return store.ErrInvalidStateTransition
@@ -158,6 +214,34 @@ func (r *EventRepo) List(ctx context.Context, limit, offset int) ([]*event.Event
 		  LIMIT $1 OFFSET $2`
 
 	rows, err := r.pool.Query(ctx, q, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []*event.Event
+	for rows.Next() {
+		var e event.Event
+		if err := rows.Scan(&e.ID, &e.Type, &e.Payload, &e.Priority, &e.Status, &e.Attempt, &e.WorkerID, &e.CreatedAt, &e.UpdatedAt, &e.CompletedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, &e)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return events, nil
+}
+
+func (r *EventRepo) GetStaleEvents(ctx context.Context, status event.EventStatus, updatedBefore time.Time) ([]*event.Event, error) {
+	q := `SELECT id, type, payload, priority, status, attempt, worker_id, created_at, updated_at, completed_at
+		  FROM events 
+		  WHERE status = $1 AND updated_at < $2
+		  ORDER BY updated_at ASC`
+
+	rows, err := r.pool.Query(ctx, q, status, updatedBefore)
 	if err != nil {
 		return nil, err
 	}

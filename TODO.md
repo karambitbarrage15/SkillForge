@@ -2,47 +2,47 @@
 
 ## Core
 
-- [ ] Go API
-- [ ] Event model
-- [ ] PostgreSQL
-- [ ] Redis
-- [ ] Queue
-- [ ] Worker
-- [ ] Worker pool
-- [ ] Scheduler
-- [ ] State machine
-- [ ] Retry
-- [ ] Idempotency
+- [x] Go API
+- [x] Event model
+- [x] PostgreSQL
+- [x] Redis
+- [x] Queue
+- [x] Worker
+- [x] Worker pool
+- [x] Scheduler
+- [x] State machine
+- [x] Retry
+- [x] Idempotency
 
 ## Realtime
 
-- [ ] WebSocket hub
-- [ ] Event broadcasts
-- [ ] Worker broadcasts
-- [ ] Heartbeats
-- [ ] Reconnection
+- [x] WebSocket hub
+- [x] Event broadcasts
+- [x] Worker broadcasts
+- [x] Heartbeats
+- [x] Reconnection
 
 ## Frontend
 
-- [ ] Dashboard
-- [ ] Event table
-- [ ] Queue metrics
-- [ ] Worker status
-- [ ] Real-time updates
+- [x] Dashboard
+- [x] Event table
+- [x] Queue metrics
+- [x] Worker status
+- [x] Real-time updates
 
 ## Reliability
 
-- [ ] Failure recovery
+- [x] Failure recovery
 - [ ] Graceful shutdown
 - [ ] Backpressure
 - [ ] Rate limiting
 
 ## Observability
 
-- [ ] Structured logs
-- [ ] Prometheus
+- [x] Structured logs
+- [x] Prometheus
 - [ ] Grafana
-- [ ] Metrics
+- [x] Metrics
 
 ## Infrastructure
 
