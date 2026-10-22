@@ -11,7 +11,8 @@ import (
 
 func TestEventSerialization(t *testing.T) {
 	workerID := uuid.New()
-	completedAt := time.Now().Round(time.Millisecond) // Round for deep equal stability with some json encodings
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	completedAt := now
 
 	e := Event{
 		ID:          uuid.New(),
@@ -21,8 +22,8 @@ func TestEventSerialization(t *testing.T) {
 		Status:      StatusCompleted,
 		Attempt:     1,
 		WorkerID:    &workerID,
-		CreatedAt:   time.Now().Round(time.Millisecond),
-		UpdatedAt:   time.Now().Round(time.Millisecond),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 		CompletedAt: &completedAt,
 	}
 

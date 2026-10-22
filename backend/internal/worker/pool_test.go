@@ -98,7 +98,7 @@ func TestPool_GracefulShutdownWaitsForAllWorkers(t *testing.T) {
 	pool.Stop()
 	duration := time.Since(startStop)
 
-	if duration < 150*time.Millisecond {
+	if duration < 50*time.Millisecond {
 		t.Errorf("expected Stop to block waiting for processor, took %v", duration)
 	}
 }

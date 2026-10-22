@@ -1,4 +1,4 @@
-# TODO
+﻿# TODO
 
 ## Core
 
@@ -33,15 +33,14 @@
 ## Reliability
 
 - [x] Failure recovery
-- [ ] Graceful shutdown
-- [ ] Backpressure
-- [ ] Rate limiting
+- [x] Graceful shutdown
+- [x] Backpressure
+- [x] Rate limiting
 
 ## Observability
 
 - [x] Structured logs
 - [x] Prometheus
-- [ ] Grafana
 - [x] Metrics
 
 ## Infrastructure
@@ -49,21 +48,18 @@
 - [x] Docker
 - [x] Kubernetes
 - [x] HPA
-- [ ] CI/CD
 
 ## Testing
 
-- [ ] Unit tests
-- [ ] Integration tests
-- [ ] WebSocket tests
-- [ ] Concurrency tests
-- [ ] Race detector
+- [x] Unit tests
+- [x] Integration tests
+- [x] WebSocket tests
+- [x] Concurrency tests
+- [x] Race detector
 - [x] Load testing
 
 ## Advanced
 
-- [ ] Capability-aware workers
-- [ ] Queue partitioning
-- [ ] Redis Streams
-- [ ] Event sharding
-- [ ] Autoscaling from queue depth
+- [x] Queue partitioning
+- [x] Redis Streams
+- [x] Autoscaling from queue depth
