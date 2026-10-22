@@ -55,7 +55,7 @@ services:
     environment:
       DATABASE_URL: postgres://streamforge:password@postgres:5432/streamforge?sslmode=disable
       REDIS_URL: redis://redis:6379/0
-      WORKER_COUNT: 4
+      WORKER_COUNT: ${WORKER_COUNT:-4}
       HTTP_METRICS_PORT: 9090
     depends_on:
       postgres:

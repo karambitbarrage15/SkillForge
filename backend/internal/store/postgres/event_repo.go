@@ -70,7 +70,11 @@ func (r *EventRepo) UpdateStatus(ctx context.Context, id uuid.UUID, old, new eve
 	}
 
 	if currentStatus != old {
-		return store.ErrInvalidStateTransition
+		if old == event.StatusQueued && currentStatus == event.StatusReceived {
+			old = event.StatusReceived
+		} else {
+			return store.ErrInvalidStateTransition
+		}
 	}
 
 	var q string
@@ -118,7 +122,11 @@ func (r *EventRepo) AssignEvent(ctx context.Context, id uuid.UUID, workerID stri
 	}
 
 	if currentStatus != old {
-		return store.ErrInvalidStateTransition
+		if old == event.StatusQueued && currentStatus == event.StatusReceived {
+			old = event.StatusReceived
+		} else {
+			return store.ErrInvalidStateTransition
+		}
 	}
 
 	var q string

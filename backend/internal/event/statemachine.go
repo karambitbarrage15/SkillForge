@@ -11,7 +11,8 @@ var (
 
 var validTransitions = map[EventStatus]map[EventStatus]bool{
 	StatusReceived: {
-		StatusQueued: true,
+		StatusQueued:     true,
+		StatusProcessing: true,
 	},
 	StatusQueued: {
 		StatusProcessing: true,

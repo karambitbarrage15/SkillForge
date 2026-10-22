@@ -58,7 +58,7 @@
 - [ ] WebSocket tests
 - [ ] Concurrency tests
 - [ ] Race detector
-- [ ] Load testing
+- [x] Load testing
 
 ## Advanced
 
