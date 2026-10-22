@@ -35,7 +35,7 @@ type Config struct {
 // Missing variables fall back to safe defaults.
 func Load() Config {
 	return Config{
-		HTTPPort:            getEnv("HTTP_PORT", "8080"),
+		HTTPPort:            getEnv("HTTP_PORT", getEnv("PORT", "8080")),
 		HTTPMetricsPort:     getEnv("HTTP_METRICS_PORT", "9090"),
 		ReadTimeout:         getDuration("READ_TIMEOUT_SECONDS", 10),
 		WriteTimeout:        getDuration("WRITE_TIMEOUT_SECONDS", 10),
