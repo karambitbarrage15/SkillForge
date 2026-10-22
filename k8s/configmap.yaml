@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: streamforge-config
+  namespace: streamforge
+  labels:
+    app.kubernetes.io/name: streamforge
+data:
+  HTTP_PORT: "8080"
+  HTTP_METRICS_PORT: "9090"
+  WORKER_COUNT: "4"
+  LOG_LEVEL: "info"

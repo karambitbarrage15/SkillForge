@@ -47,8 +47,8 @@
 ## Infrastructure
 
 - [x] Docker
-- [ ] Kubernetes
-- [ ] HPA
+- [x] Kubernetes
+- [x] HPA
 - [ ] CI/CD
 
 ## Testing
