@@ -1,0 +1,88 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: streamforge
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: streamforge
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/internal/store/postgres/schema.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U streamforge -d streamforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      target: api
+    restart: on-failure
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    environment:
+      DATABASE_URL: postgres://streamforge:password@postgres:5432/streamforge?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      HTTP_PORT: 8080
+      HTTP_METRICS_PORT: 9090
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+      target: worker
+    restart: on-failure
+    ports:
+      - "9091:9090"
+    environment:
+      DATABASE_URL: postgres://streamforge:password@postgres:5432/streamforge?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      WORKER_COUNT: 4
+      HTTP_METRICS_PORT: 9090
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  simulator:
+    build:
+      context: ./backend
+      target: simulator
+    environment:
+      API_URL: http://api:8080
+      RATE: 10
+    depends_on:
+      - api
+    profiles:
+      - sim
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: on-failure
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:

@@ -5,7 +5,7 @@ import { KpiCards } from './components/KpiCards';
 import { RecentEvents } from './components/RecentEvents';
 import { WorkerStatus } from './components/WorkerStatus';
 
-const WS_URL = 'ws://localhost:8080/ws';
+const WS_URL = import.meta.env.VITE_WS_URL || (typeof window !== 'undefined' && window.location.host ? (window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + window.location.host + '/ws' : 'ws://localhost:8080/ws');
 
 function App() {
   const {
