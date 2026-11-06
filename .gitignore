@@ -1,0 +1,3 @@
+bin/
+backend/bin/
+.env

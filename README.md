@@ -1,5 +1,9 @@
 # StreamForge
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-StreamForge%20Dashboard-blue?style=for-the-badge&logo=googlechrome)](https://jointly-incretionary-arlena.ngrok-free.dev)
+
+> 🌐 **Live Demo Website**: [https://jointly-incretionary-arlena.ngrok-free.dev](https://jointly-incretionary-arlena.ngrok-free.dev)
+
 StreamForge is a distributed real-time event processing platform built primarily in Go.
 
 It accepts high-volume events, places them into a distributed queue, schedules them across workers, processes them concurrently, persists their results, and streams processing state to a real-time dashboard.
