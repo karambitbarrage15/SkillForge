@@ -1,5 +1,5 @@
 /**
- * WebSocket message types matching the Phase 12 backend contract exactly.
+ * WebSocket message types matching the Phase 12 backend contract.
  * See: backend/internal/websocket/types.go
  */
 
@@ -62,9 +62,25 @@ export type WSMessage =
 export interface RecentEvent {
   id: string;
   eventId: string;
+  eventType?: string;
   status: 'RECEIVED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
   timestamp: number;
   processingTimeMs?: number;
   workerId?: string;
   attempt?: number;
+  priority?: number;
+  payload?: Record<string, unknown>;
+}
+
+export interface GlobalTimeZone {
+  id: string;
+  city: string;
+  country: string;
+  region: string;
+  timeZone: string;
+  utcOffset: string;
+  coordinates: { x: number; y: number }; // Percentage for world map
+  flag: string;
+  activeWorkersCount: number;
+  avgLatencyMs: number;
 }
