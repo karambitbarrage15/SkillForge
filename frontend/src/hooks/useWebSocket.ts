@@ -281,14 +281,16 @@ export function useWebSocket(url: string): DashboardState {
   // Helper to simulate a multi-event traffic spike
   const simulateSpike = useCallback(async (count = 10) => {
     const types = ['ORDER_CREATED', 'PAYMENT_SUCCESS', 'INVENTORY_UPDATED', 'ORDER_CANCELLED', 'USER_REGISTERED'];
+    const priorities = [1, 5, 10];
     for (let i = 0; i < count; i++) {
       const t = types[Math.floor(Math.random() * types.length)];
+      const p = priorities[Math.floor(Math.random() * priorities.length)];
       sendEvent(t, {
         order_id: `ord-burst-${Date.now()}-${i}`,
         amount: Math.round((Math.random() * 500 + 10) * 100) / 100,
         source: 'motion-ui-dashboard',
         simulated: true,
-      }, Math.floor(Math.random() * 10) + 1);
+      }, p);
       await new Promise(r => setTimeout(r, 60));
     }
   }, [sendEvent]);

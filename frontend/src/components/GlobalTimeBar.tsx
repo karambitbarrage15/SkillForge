@@ -180,3 +180,4 @@ export function GlobalTimeBar({ activeNodeId = 'nyc', onSelectNode }: GlobalTime
     </div>
   );
 }
+
